@@ -1,0 +1,73 @@
+---
+title: "gee_Whittaker"
+author: "Dongdong Kong"
+date: "2021/7/3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Whittaker smoother
+
+不可否认`Savitzky-Golay (SG)`是一个非常优秀的平滑算法，奈何计算效率太低，使其在Google Earth Engine (GEE) 根本无法使用。两年过去了，很多GEE developers依然执着于SG，不断问SG在GEE上如何应用。
+
+# 上下边界(vegetation index boundary)
+
+# `bisquare`权重调整(Modified `bisquare` weights updating )
+
+在加权线性回归（weighted linear regression）中，`bisquare`是最常用的权重调整函数之一。其主要是根据残差的大小，调整输入的拟合点的权重，具体公式如下：
+$$
+{w\left(r_{i}^{k}\right)} 
+{\quad=\left\{
+
+\begin{array}{ll}{
+\left(1-\left(r_{i}^{k} / 6 s\right)^{2}\right)^{2},} & {\left|r_{i}^{k}\right|<6 s} \\ 
+{0,} & {\left|r_{i}^{k}\right| \geqslant 6s}
+\end{array}\right.} 
+
+$$
+**在应用到平滑遥感植被指数时间序列时，需要根据植被指数被污染时的特征来修改`bisqure`，修改`bisquare`时考虑以下准则:** 
+
+1. 遥感植被指数，被云、雨、雪、气溶胶等污染时一般会偏低。因此在拟合植被生长曲线的时候，这些点一般会位于拟合曲线的下方。
+
+   令残差$re = Y_{pred} - Y$，其中$Y_{pred}$是平滑之后的时间序列。
+
+   则被污染的点，一般$re > 0$
+
+2. 此外，考虑到卫星太阳高度角过低时，会使得观测到的波段有较大的误差，此时会存在一些异离群点（outliers）。参考`bisquare`的做法，定义 $abs(res) > 6s$ (其中$s = median(re)$的点为离群点。这些离群点也不可依赖，需要给他们较低的权重$w_{min}$。
+
+3. 坏的点，即使看起来很好，调整权重时要对其特殊照顾。具体实现上，可以采用上一次的权重乘以本地权重调整的系数 $w_{i}^{k-1}\left(1-\left(r_{i}^{k} / 6 s\right)^{2}\right)^{2}$。
+
+基于此修改后的`bisquare`变身为:
+$$
+\begin{array}
+{l}{w\left(r_{i}^{k}\right)} 
+{\quad=\left\{
+
+\begin{array}{ll}{
+w_{i}^{k-1}\left(1-\left(r_{i}^{k} / 6 s\right)^{2}\right)^{2},} & 
+{0 < r_{i}<6 s} \\ 
+{w_{min},} & {\left|r_i^k\right| \geqslant 6s} \\ 
+{w_{i}^{k-1}, } & { -6s < r_{i} \leqslant 0}
+\end{array}\right.} 
+
+\end{array}
+$$
+需要注意的是，$w_{min}$应该大于0。因为在冬季，植被指数被积雪污染是很常见的事，我们需要这些被积雪污染的点来平衡、划分植被生长周期，而不是把他们权重设置成0，完全忽略。
+
+# 生成新的时间序列 (Generating new time series)
+
+* 为了趋近植被指数序列$y$的上方包络线，在每次迭代中我们需要适当的向上调整$y_i^{k-1}$（其中i表示时间序列中的第`i`个点, $k$表示第$k$次迭代），即。
+* 当平滑后的曲线过于平滑时，在非生长季会存在明显的高估。如果继续向上取上方包络线，植被生长周期就会被覆盖掉。因此为了避免这种情况，我们只对生长季的植被指数调整$y_i^{k}$。
+
+$$
+y_{i}^{k}=\left\{\begin{array}{cl}{y_{i}^{n e w},} & {r_{i}>0, Growing\;season} \\ {y_{i}^{k-1},} & {r_{i} \leqslant 0, or\; Nongrowing\;season}\end{array}\right.
+$$
+
+
+
+## References
+
+> [1].  Kong, D., Zhang, Y., Gu, X., & Wang, D. (2019). A robust method for reconstructing global MODIS EVI time series on the Google Earth Engine. *ISPRS Journal of Photogrammetry and Remote Sensing*, *155*(May), 13–24. https://doi.org/10.1016/j.isprsjprs.2019.06.014
